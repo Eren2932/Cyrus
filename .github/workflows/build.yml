@@ -1,0 +1,399 @@
+name: Cyrus APK from ZIP
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - '*.zip'
+      - '**/*.zip'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+    inputs:
+      archive:
+        description: 'Exact ZIP path, e.g. Cyrus-0.3.0-full.zip. Empty = newest project ZIP in Git history.'
+        required: false
+        default: ''
+        type: string
+      run_checks:
+        description: 'Also run unit tests and Android lint after building the APK'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cyrus-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_VERSION: '8.11.1'
+  GO_VERSION: '1.23.6'
+  GOMOBILE_VERSION: 'v0.1.4'
+  NDK_VERSION: '28.0.13004108'
+  # sing-box v1.11.1, pinned to its reviewed source commit, not moving master.
+  SING_BOX_REF: '92d245ad040cbda2f84b21c2a847a470e532c179'
+  NATIVE_PLATFORMS: 'android/arm,android/arm64,android/amd64'
+  GOMAXPROCS: '2'
+  GOFLAGS: '-p=2'
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout source archive repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select changed ZIP and extract Android project
+        id: source
+        env:
+          ARCHIVE_INPUT: ${{ inputs.archive }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path, PurePosixPath
+          import shutil
+          import stat
+          import subprocess
+          import zipfile
+
+          repo = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          os.chdir(repo)
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+          requested = os.environ.get('ARCHIVE_INPUT', '').strip()
+          max_bytes = 2 * 1024**3
+
+          def fail(message):
+              raise SystemExit(message)
+
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+
+          def names(data):
+              return [p.decode('utf-8') for p in data.split(b'\0') if p]
+
+          def safe_path(name):
+              path = PurePosixPath(name)
+              if not name or any(ord(c) < 32 for c in name) or '\\' in name or ':' in name:
+                  fail('Unsafe path in archive or repository: ' + repr(name))
+              if path.is_absolute() or '..' in path.parts:
+                  fail('Unsafe path: ' + repr(name))
+              return path
+
+          def project_root(name):
+              path = repo / safe_path(name)
+              if not path.is_file() or path.is_symlink() or not name.lower().endswith('.zip'):
+                  return None
+              try:
+                  with zipfile.ZipFile(path) as z:
+                      members = {i.filename for i in z.infolist() if not i.is_dir()}
+                      roots = []
+                      for member in members:
+                          if member.endswith('settings.gradle.kts') or member.endswith('settings.gradle'):
+                              root = member.rsplit('/', 1)[0] + '/' if '/' in member else ''
+                              if root + 'app/build.gradle.kts' in members or root + 'app/build.gradle' in members:
+                                  roots.append(root)
+                      if len(roots) > 1:
+                          fail('More than one Android project inside ' + name)
+                      return roots[0] if roots else None
+              except zipfile.BadZipFile:
+                  return None
+
+          def choose(paths):
+              found = [(p, project_root(p)) for p in sorted(set(paths))]
+              found = [(p, root) for p, root in found if root is not None]
+              if len(found) > 1:
+                  fail('Several project ZIPs changed together: ' + ', '.join(p for p, _ in found)
+                       + '. Use Run workflow and enter the exact archive path.')
+              return found[0] if found else None
+
+          selected = None
+          if requested:
+              selected = choose([requested])
+              if selected is None:
+                  fail('Specified ZIP is missing, invalid, or contains no Android project: ' + requested)
+          elif os.environ['GITHUB_EVENT_NAME'] == 'push':
+              before = event.get('before', '')
+              after = os.environ['GITHUB_SHA']
+              if before and set(before) != {'0'}:
+                  try:
+                      changed = names(git('diff', '--name-only', '--diff-filter=AM', '--no-renames', '-z',
+                                          before, after, '--', '*.zip'))
+                  except subprocess.CalledProcessError:
+                      fail('Cannot read previous push commit. Run manually with the archive path.')
+              else:
+                  changed = names(git('diff-tree', '--root', '--no-commit-id', '-r', '-m',
+                                      '--name-only', '--diff-filter=AM', '--no-renames', '-z', after, '--', '*.zip'))
+              if changed:
+                  selected = choose(changed)
+                  if selected is None:
+                      fail('Changed ZIPs contain no Android project. Older ZIPs will NOT be built instead.')
+              if not changed and before and set(before) != {'0'}:
+                  deleted = names(git('diff', '--name-only', '--diff-filter=D', '-z', before, after, '--', '*.zip'))
+                  if deleted:
+                      fail('Only ZIP deletion detected. Older archives will NOT be built. Use a manual run if needed.')
+              # If only build.yml changed, the newest project ZIP is selected below.
+
+          if selected is None:
+              # Manual auto-selection or the first workflow installation: use Git history,
+              # not alphabetic order, file modification time, or ZIP-internal timestamps.
+              commits = git('log', '--format=%H', '--first-parent', 'HEAD', '--', '*.zip').decode().splitlines()
+              for commit in commits:
+                  changed = names(git('diff-tree', '--root', '--no-commit-id', '-r', '-m',
+                                      '--name-only', '--diff-filter=AM', '--no-renames', '-z', commit, '--', '*.zip'))
+                  selected = choose(changed)
+                  if selected:
+                      break
+              if selected is None:
+                  fail('No source ZIP found. Upload Cyrus-0.3.0-full.zip, not an APK or a ZIP containing only another ZIP.')
+
+          name, prefix = selected
+          archive = repo / name
+          with archive.open('rb') as f:
+              digest = hashlib.file_digest(f, 'sha256').hexdigest()
+          work = Path(os.environ['RUNNER_TEMP']) / 'cyrus-source'
+          work.mkdir(exist_ok=False)
+          with zipfile.ZipFile(archive) as z:
+              entries = z.infolist()
+              if len(entries) > 30000 or sum(i.file_size for i in entries) > max_bytes:
+                  fail('ZIP exceeds extraction safety limits (30,000 entries / 2 GiB).')
+              seen = set()
+              for item in entries:
+                  relative = safe_path(item.filename)
+                  normalized = relative.as_posix()
+                  mode = item.external_attr >> 16
+                  if normalized in seen or stat.S_ISLNK(mode):
+                      fail('Duplicate ZIP path or symlink: ' + item.filename)
+                  seen.add(normalized)
+                  if stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR):
+                      fail('Special file in ZIP: ' + item.filename)
+                  dest = work.joinpath(*relative.parts)
+                  if item.is_dir():
+                      dest.mkdir(parents=True, exist_ok=True)
+                  else:
+                      dest.parent.mkdir(parents=True, exist_ok=True)
+                      with z.open(item) as source, dest.open('wb') as target:
+                          shutil.copyfileobj(source, target)
+                      if mode & 0o111:
+                          dest.chmod(0o755)
+
+          project = work.joinpath(*PurePosixPath(prefix).parts)
+          # Developer-machine paths and Gradle output must not affect CI.
+          (project / 'local.properties').unlink(missing_ok=True)
+          shutil.rmtree(project / '.gradle', ignore_errors=True)
+          libs = project / 'vpn/service/libs'
+          libs.mkdir(parents=True, exist_ok=True)
+          aars = list(libs.glob('*.aar'))
+          if len(aars) > 1:
+              fail('Several AARs in vpn/service/libs. Keep exactly one compatible libbox AAR in the source ZIP.')
+          needs_native = not aars
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f'PROJECT_DIR={project}\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'archive_sha={digest}\nneeds_native={str(needs_native).lower()}\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write(f'## Selected source\n\nArchive: `{name}`\n\nSHA-256: `{digest}`\n\n')
+          print('Selected archive:', name)
+          print('SHA-256:', digest)
+          print('Android project:', project)
+          PY
+
+      - name: Check source invariants, if supplied
+        run: |
+          if [[ -f "$PROJECT_DIR/tools/check_source.py" ]]; then
+            cd "$PROJECT_DIR"
+            python3 tools/check_source.py
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Restore exact native AAR cache
+        if: steps.source.outputs.needs_native == 'true'
+        id: native_cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cyrus-native-cache
+          key: cyrus-libbox-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.SING_BOX_REF }}-go${{ env.GO_VERSION }}-gomobile${{ env.GOMOBILE_VERSION }}-ndk${{ env.NDK_VERSION }}-arm-arm64-amd64
+
+      - name: Checkout pinned sing-box source
+        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: SagerNet/sing-box
+          ref: ${{ env.SING_BOX_REF }}
+          path: .ci-native
+          persist-credentials: false
+
+      - name: Set up matching Go toolchain
+        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: .ci-native/go.sum
+
+      - name: Install NDK for native build
+        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true'
+        run: |
+          sdkmanager "ndk;$NDK_VERSION"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Build missing libbox AAR
+        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true'
+        working-directory: .ci-native
+        run: |
+          # Use cmd/gomobile and pinned versions, as in upstream Makefile.
+          # Do NOT pass -tags to the build_libbox program: v1.11.1 has no such flag.
+          go install "github.com/sagernet/gomobile/cmd/gomobile@$GOMOBILE_VERSION"
+          go install "github.com/sagernet/gomobile/cmd/gobind@$GOMOBILE_VERSION"
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          go run ./cmd/internal/build_libbox -target android -platform "$NATIVE_PLATFORMS"
+          test -s libbox.aar
+          mkdir -p "$RUNNER_TEMP/cyrus-native-cache"
+          cp libbox.aar "$RUNNER_TEMP/cyrus-native-cache/libbox.aar"
+
+      - name: Add generated or cached AAR to project
+        if: steps.source.outputs.needs_native == 'true'
+        run: |
+          test -s "$RUNNER_TEMP/cyrus-native-cache/libbox.aar"
+          cp "$RUNNER_TEMP/cyrus-native-cache/libbox.aar" "$PROJECT_DIR/vpn/service/libs/libbox.aar"
+
+      - name: Verify native dependency
+        run: |
+          python3 - <<'PY'
+          import io, os, zipfile
+          from pathlib import Path
+          files = list((Path(os.environ['PROJECT_DIR']) / 'vpn/service/libs').glob('*.aar'))
+          if len(files) != 1:
+              raise SystemExit('Expected exactly one libbox AAR.')
+          with zipfile.ZipFile(files[0]) as aar:
+              with zipfile.ZipFile(io.BytesIO(aar.read('classes.jar'))) as jar:
+                  if 'io/nekohasekai/libbox/Libbox.class' not in jar.namelist():
+                      raise SystemExit('AAR does not contain io.nekohasekai.libbox.Libbox.')
+              for abi in ('arm64-v8a', 'armeabi-v7a', 'x86_64'):
+                  if f'jni/{abi}/libbox.so' not in aar.namelist():
+                      raise SystemExit(f'AAR missing native library for {abi}; this project builds three ABI splits.')
+          print('Native AAR contains Java bindings and all three required ABIs.')
+          PY
+
+      - name: Save libbox as a downloadable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cyrus-libbox-${{ github.run_number }}
+          path: ${{ env.PROJECT_DIR }}/vpn/service/libs/*.aar
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+          cache-read-only: false
+
+      - name: Restore development signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: cyrus-debug-keystore-v1-${{ github.repository_id }}
+
+      - name: Create development signing key if missing
+        run: |
+          # This is a standard DEBUG key, never a production signing key.
+          mkdir -p "$HOME/.android"
+          if [[ ! -f "$HOME/.android/debug.keystore" ]]; then
+            keytool -genkeypair -noprompt \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -alias androiddebugkey -keypass android \
+              -dname 'CN=Android Debug,O=Android,C=US' \
+              -keyalg RSA -keysize 2048 -validity 10000
+          fi
+
+      - name: Build debug APKs
+        run: |
+          cd "$PROJECT_DIR"
+          # The source project has no Gradle Wrapper; use the installed pinned Gradle.
+          gradle --no-daemon --console=plain --stacktrace --max-workers=2 :app:assembleDebug
+
+      - name: Collect APKs and record source provenance
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          root = Path(os.environ['PROJECT_DIR'])
+          out = Path(os.environ['RUNNER_TEMP']) / 'cyrus-apks'
+          out.mkdir(exist_ok=True)
+          files = sorted((root / 'app/build/outputs/apk').rglob('*.apk'))
+          if not files:
+              raise SystemExit('Gradle returned without producing APK files.')
+          hashes = []
+          for apk in files:
+              dest = out / apk.name
+              if dest.exists():
+                  raise SystemExit('Duplicate APK file name: ' + apk.name)
+              shutil.copy2(apk, dest)
+              with dest.open('rb') as f:
+                  hashes.append(hashlib.file_digest(f, 'sha256').hexdigest() + '  ' + dest.name)
+          (out / 'SHA256SUMS.txt').write_text('\n'.join(hashes) + '\n')
+          (out / 'BUILD-INFO.txt').write_text(
+              'Debug build, not a signed production release.\n'
+              + 'Repository commit: ' + os.environ['GITHUB_SHA'] + '\n'
+              + 'Run: ' + os.environ['GITHUB_RUN_ID'] + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write('## APK artifacts\n\n' + '\n'.join('- `' + p.name + '`' for p in files)
+                      + '\n\nFor most modern phones choose arm64-v8a. universal is larger.\n')
+          PY
+
+      - name: Upload installable debug APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cyrus-debug-APK-${{ github.run_number }}
+          path: ${{ runner.temp }}/cyrus-apks/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Optional unit tests and Android lint
+        if: inputs.run_checks == true
+        run: |
+          cd "$PROJECT_DIR"
+          gradle --no-daemon --console=plain --stacktrace --max-workers=2 test :app:lintDebug
+
+      - name: Record check status
+        if: always()
+        env:
+          CHECKS_REQUESTED: ${{ inputs.run_checks }}
+        run: |
+          if [[ "$CHECKS_REQUESTED" != 'true' ]]; then
+            echo 'Unit tests and Android lint were not requested. APK compilation is not a runtime/VPN test.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload diagnostic reports
+        if: always() && steps.source.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cyrus-reports-${{ github.run_number }}
+          path: |
+            ${{ env.PROJECT_DIR }}/**/build/reports/**
+            ${{ env.PROJECT_DIR }}/**/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 14
+          
