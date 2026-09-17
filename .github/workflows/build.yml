@@ -1,62 +1,62 @@
-name: Cyrus APK from ZIP[span_0](start_span)[span_0](end_span)
+name: Cyrus APK from ZIP
 
-on:[span_1](start_span)[span_1](end_span)
-  push:[span_2](start_span)[span_2](end_span)
-    branches: [main, master][span_3](start_span)[span_3](end_span)
-    paths:[span_4](start_span)[span_4](end_span)
-      - '*.zip[span_5](start_span)'[span_5](end_span)
-      - '**/*.zip[span_6](start_span)'[span_6](end_span)
-      - '.github/workflows/build.yml[span_7](start_span)'[span_7](end_span)
-  workflow_dispatch:[span_8](start_span)[span_8](end_span)
-    inputs:[span_9](start_span)[span_9](end_span)
-      archive:[span_10](start_span)[span_10](end_span)
-        description: 'Exact ZIP path, e.g. Cyrus-0.3.0-full.zip. Empty = newest project ZIP in Git history.[span_11](start_span)'[span_11](end_span)
-        required: false[span_12](start_span)[span_12](end_span)
-        default: '[span_13](start_span)'[span_13](end_span)
-        type: string[span_14](start_span)[span_14](end_span)
-      run_checks:[span_15](start_span)[span_15](end_span)
-        description: 'Also run unit tests and Android lint after building the APK[span_16](start_span)'[span_16](end_span)
-        required: false[span_17](start_span)[span_17](end_span)
-        default: false[span_18](start_span)[span_18](end_span)
-        type: boolean[span_19](start_span)[span_19](end_span)
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - '*.zip'
+      - '**/*.zip'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+    inputs:
+      archive:
+        description: 'Exact ZIP path, e.g. Cyrus-0.3.0-full.zip. Empty = newest project ZIP in Git history.'
+        required: false
+        default: ''
+        type: string
+      run_checks:
+        description: 'Also run unit tests and Android lint after building the APK'
+        required: false
+        default: false
+        type: boolean
 
-permissions:[span_20](start_span)[span_20](end_span)
-  contents: read[span_21](start_span)[span_21](end_span)
+permissions:
+  contents: read
 
-concurrency:[span_22](start_span)[span_22](end_span)
-  group: cyrus-apk-${{ github.ref }}[span_23](start_span)[span_23](end_span)
-  cancel-in-progress: true[span_24](start_span)[span_24](end_span)
+concurrency:
+  group: cyrus-apk-${{ github.ref }}
+  cancel-in-progress: true
 
-env:[span_25](start_span)[span_25](end_span)
-  GRADLE_VERSION: '8.11.1[span_26](start_span)'[span_26](end_span)
-  GO_VERSION: '1.23.6[span_27](start_span)'[span_27](end_span)
-  GOMOBILE_VERSION: 'v0.1.4[span_28](start_span)'[span_28](end_span)
-  NDK_VERSION: '28.0.13004108[span_29](start_span)'[span_29](end_span)
+env:
+  GRADLE_VERSION: '8.11.1'
+  GO_VERSION: '1.23.6'
+  GOMOBILE_VERSION: 'v0.1.4'
+  NDK_VERSION: '28.0.13004108'
   # sing-box v1.11.1, pinned to its reviewed source commit, not moving master.
-  SING_BOX_REF: '92d245ad040cbda2f84b21c2a847a470e532c179[span_30](start_span)'[span_30](end_span)
-  NATIVE_PLATFORMS: 'android/arm,android/arm64,android/amd64[span_31](start_span)'[span_31](end_span)
-  GOMAXPROCS: '2[span_32](start_span)'[span_32](end_span)
-  GOFLAGS: '-p=2[span_33](start_span)'[span_33](end_span)
+  SING_BOX_REF: '92d245ad040cbda2f84b21c2a847a470e532c179'
+  NATIVE_PLATFORMS: 'android/arm,android/arm64,android/amd64'
+  GOMAXPROCS: '2'
+  GOFLAGS: '-p=2'
 
-jobs:[span_34](start_span)[span_34](end_span)
-  apk:[span_35](start_span)[span_35](end_span)
-    runs-on: ubuntu-24.04[span_36](start_span)[span_36](end_span)
-    timeout-minutes: 90[span_37](start_span)[span_37](end_span)
-    defaults:[span_38](start_span)[span_38](end_span)
-      run:[span_39](start_span)[span_39](end_span)
-        shell: bash[span_40](start_span)[span_40](end_span)
-    steps:[span_41](start_span)[span_41](end_span)
-      - name: Checkout source archive repository[span_42](start_span)[span_42](end_span)
-        uses: actions/checkout@v4[span_43](start_span)[span_43](end_span)
-        with:[span_44](start_span)[span_44](end_span)
-          fetch-depth: 0[span_45](start_span)[span_45](end_span)
-          persist-credentials: false[span_46](start_span)[span_46](end_span)
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout source archive repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Select changed ZIP and extract Android project[span_47](start_span)[span_47](end_span)
-        id: source[span_48](start_span)[span_48](end_span)
-        env:[span_49](start_span)[span_49](end_span)
-          ARCHIVE_INPUT: ${{ inputs.archive }}[span_50](start_span)[span_50](end_span)
-        run: |[span_51](start_span)[span_51](end_span)
+      - name: Select changed ZIP and extract Android project
+        id: source
+        env:
+          ARCHIVE_INPUT: ${{ inputs.archive }}
+        run: |
           python3 - <<'PY'
           import hashlib
           import json
@@ -206,24 +206,24 @@ jobs:[span_34](start_span)[span_34](end_span)
           print('Selected archive:', name)
           print('SHA-256:', digest)
           print('Android project:', project)
-          PY[span_52](start_span)[span_52](end_span)
+          PY
 
-      - name: Check source invariants, if supplied[span_53](start_span)[span_53](end_span)
-        run: |[span_54](start_span)[span_54](end_span)
+      - name: Check source invariants, if supplied
+        run: |
           if [[ -f "$PROJECT_DIR/tools/check_source.py" ]]; then
             cd "$PROJECT_DIR"
             python3 tools/check_source.py
-          fi[span_55](start_span)[span_55](end_span)
+          fi
 
-      - name: Set up JDK 17[span_56](start_span)[span_56](end_span)
-        uses: actions/setup-java@v4[span_57](start_span)[span_57](end_span)
-        with:[span_58](start_span)[span_58](end_span)
-          distribution: temurin[span_59](start_span)[span_59](end_span)
-          java-version: '17[span_60](start_span)'[span_60](end_span)
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-      - name: Accept Android SDK licenses[span_61](start_span)[span_61](end_span)
-        timeout-minutes: 5[span_62](start_span)[span_62](end_span)
-        run: |[span_63](start_span)[span_63](end_span)
+      - name: Accept Android SDK licenses
+        timeout-minutes: 5
+        run: |
           set -euo pipefail
           SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
@@ -242,46 +242,46 @@ jobs:[span_34](start_span)[span_34](end_span)
           echo "ANDROID_HOME=$SDK_ROOT"             >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_ROOT"         >> "$GITHUB_ENV"
           echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "$SDK_ROOT/platform-tools"           >> "$GITHUB_PATH[span_64](start_span)"[span_64](end_span)
+          echo "$SDK_ROOT/platform-tools"           >> "$GITHUB_PATH"
 
-      - name: Install Android build tools[span_65](start_span)[span_65](end_span)
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0[span_66](start_span)'[span_66](end_span)
+      - name: Install Android build tools
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
 
-      - name: Restore exact native AAR cache[span_67](start_span)[span_67](end_span)
-        if: steps.source.outputs.needs_native == 'true[span_68](start_span)'[span_68](end_span)
-        id: native_cache[span_69](start_span)[span_69](end_span)
-        uses: actions/cache@v4[span_70](start_span)[span_70](end_span)
-        with:[span_71](start_span)[span_71](end_span)
-          path: ${{ runner.temp }}/cyrus-native-cache[span_72](start_span)[span_72](end_span)
-          key: cyrus-libbox-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.SING_BOX_REF }}-go${{ env.GO_VERSION }}-gomobile${{ env.GOMOBILE_VERSION }}-ndk${{ env.NDK_VERSION }}-arm-arm64-amd64[span_73](start_span)[span_73](end_span)
+      - name: Restore exact native AAR cache
+        if: steps.source.outputs.needs_native == 'true'
+        id: native_cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cyrus-native-cache
+          key: cyrus-libbox-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.SING_BOX_REF }}-go${{ env.GO_VERSION }}-gomobile${{ env.GOMOBILE_VERSION }}-ndk${{ env.NDK_VERSION }}-arm-arm64-amd64
 
-      - name: Checkout pinned sing-box source[span_74](start_span)[span_74](end_span)
-        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true[span_75](start_span)'[span_75](end_span)
-        uses: actions/checkout@v4[span_76](start_span)[span_76](end_span)
-        with:[span_77](start_span)[span_77](end_span)
-          repository: SagerNet/sing-box[span_78](start_span)[span_78](end_span)
-          ref: ${{ env.SING_BOX_REF }}[span_79](start_span)[span_79](end_span)
-          path: .ci-native[span_80](start_span)[span_80](end_span)
-          persist-credentials: false[span_81](start_span)[span_81](end_span)
+      - name: Checkout pinned sing-box source
+        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: SagerNet/sing-box
+          ref: ${{ env.SING_BOX_REF }}
+          path: .ci-native
+          persist-credentials: false
 
-      - name: Set up matching Go toolchain[span_82](start_span)[span_82](end_span)
-        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true[span_83](start_span)'[span_83](end_span)
-        uses: actions/setup-go@v5[span_84](start_span)[span_84](end_span)
-        with:[span_85](start_span)[span_85](end_span)
-          go-version: ${{ env.GO_VERSION }}[span_86](start_span)[span_86](end_span)
-          cache: true[span_87](start_span)[span_87](end_span)
-          cache-dependency-path: .ci-native/go.sum[span_88](start_span)[span_88](end_span)
+      - name: Set up matching Go toolchain
+        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: .ci-native/go.sum
 
-      - name: Install NDK for native build[span_89](start_span)[span_89](end_span)
-        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true[span_90](start_span)'[span_90](end_span)
-        run: |[span_91](start_span)[span_91](end_span)
+      - name: Install NDK for native build
+        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true'
+        run: |
           sdkmanager "ndk;$NDK_VERSION"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV[span_92](start_span)"[span_92](end_span)
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
 
-      - name: Build missing libbox AAR[span_93](start_span)[span_93](end_span)
-        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true[span_94](start_span)'[span_94](end_span)
-        working-directory: .ci-native[span_95](start_span)[span_95](end_span)
-        run: |[span_96](start_span)[span_96](end_span)
+      - name: Build missing libbox AAR
+        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true'
+        working-directory: .ci-native
+        run: |
           # Use cmd/gomobile and pinned versions, as in upstream Makefile.
           # Do NOT pass -tags to the build_libbox program: v1.11.1 has no such flag.
           go install "github.com/sagernet/gomobile/cmd/gomobile@$GOMOBILE_VERSION"
@@ -290,16 +290,16 @@ jobs:[span_34](start_span)[span_34](end_span)
           go run ./cmd/internal/build_libbox -target android -platform "$NATIVE_PLATFORMS"
           test -s libbox.aar
           mkdir -p "$RUNNER_TEMP/cyrus-native-cache"
-          cp libbox.aar "$RUNNER_TEMP/cyrus-native-cache/libbox.aar[span_97](start_span)"[span_97](end_span)
+          cp libbox.aar "$RUNNER_TEMP/cyrus-native-cache/libbox.aar"
 
-      - name: Add generated or cached AAR to project[span_98](start_span)[span_98](end_span)
-        if: steps.source.outputs.needs_native == 'true[span_99](start_span)'[span_99](end_span)
-        run: |[span_100](start_span)[span_100](end_span)
+      - name: Add generated or cached AAR to project
+        if: steps.source.outputs.needs_native == 'true'
+        run: |
           test -s "$RUNNER_TEMP/cyrus-native-cache/libbox.aar"
-          cp "$RUNNER_TEMP/cyrus-native-cache/libbox.aar" "$PROJECT_DIR/vpn/service/libs/libbox.aar[span_101](start_span)"[span_101](end_span)
+          cp "$RUNNER_TEMP/cyrus-native-cache/libbox.aar" "$PROJECT_DIR/vpn/service/libs/libbox.aar"
 
-      - name: Verify native dependency[span_102](start_span)[span_102](end_span)
-        run: |[span_103](start_span)[span_103](end_span)
+      - name: Verify native dependency
+        run: |
           python3 - <<'PY'
           import io, os, zipfile
           from pathlib import Path
@@ -314,30 +314,105 @@ jobs:[span_34](start_span)[span_34](end_span)
                   if f'jni/{abi}/libbox.so' not in aar.namelist():
                       raise SystemExit(f'AAR missing native library for {abi}; this project builds three ABI splits.')
           print('Native AAR contains Java bindings and all three required ABIs.')
-          PY[span_104](start_span)[span_104](end_span)
+          PY
 
-      - name: Save libbox as a downloadable artifact[span_105](start_span)[span_105](end_span)
-        uses: actions/upload-artifact@v4[span_106](start_span)[span_106](end_span)
-        with:[span_107](start_span)[span_107](end_span)
-          name: Cyrus-libbox-${{ github.run_number }}[span_108](start_span)[span_108](end_span)
-          path: ${{ env.PROJECT_DIR }}/vpn/service/libs/*.aar[span_109](start_span)[span_109](end_span)
-          retention-days: 14[span_110](start_span)[span_110](end_span)
-          if-no-files-found: error[span_111](start_span)[span_111](end_span)
+      - name: Save libbox as a downloadable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cyrus-libbox-${{ github.run_number }}
+          path: ${{ env.PROJECT_DIR }}/vpn/service/libs/*.aar
+          retention-days: 14
+          if-no-files-found: error
 
-      - name: Set up Gradle[span_112](start_span)[span_112](end_span)
-        uses: gradle/actions/setup-gradle@v4[span_113](start_span)[span_113](end_span)
-        with:[span_114](start_span)[span_114](end_span)
-          gradle-version: ${{ env.GRADLE_VERSION }}[span_115](start_span)[span_115](end_span)
-          cache-read-only: false[span_116](start_span)[span_116](end_span)
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+          cache-read-only: false
 
-      - name: Restore development signing key[span_117](start_span)[span_117](end_span)
-        uses: actions/cache@v4[span_118](start_span)[span_118](end_span)
-        with:[span_119](start_span)[span_119](end_span)
-          path: ~/.android/debug.keystore[span_120](start_span)[span_120](end_span)
-          key: cyrus-debug-keystore-v1-${{ github.repository_id }}[span_121](start_span)[span_121](end_span)
+      - name: Restore development signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: cyrus-debug-keystore-v1-${{ github.repository_id }}
 
-      - name: Create development signing key if missing[span_122](start_span)[span_122](end_span)
-        run: |[span_123](start_span)[span_123](end_span)
+      - name: Create development signing key if missing
+        run: |
           # This is a standard DEBUG key, never a production signing key.
           mkdir -p "$HOME/.android"
-   
+          if [[ ! -f "$HOME/.android/debug.keystore" ]]; then
+            keytool -genkeypair -noprompt \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -alias androiddebugkey -keypass android \
+              -dname 'CN=Android Debug,O=Android,C=US' \
+              -keyalg RSA -keysize 2048 -validity 10000
+          fi
+
+      - name: Build debug APKs
+        run: |
+          cd "$PROJECT_DIR"
+          # The source project has no Gradle Wrapper; use the installed pinned Gradle.
+          gradle --no-daemon --console=plain --stacktrace --max-workers=2 :app:assembleDebug
+
+      - name: Collect APKs and record source provenance
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          root = Path(os.environ['PROJECT_DIR'])
+          out = Path(os.environ['RUNNER_TEMP']) / 'cyrus-apks'
+          out.mkdir(exist_ok=True)
+          files = sorted((root / 'app/build/outputs/apk').rglob('*.apk'))
+          if not files:
+              raise SystemExit('Gradle returned without producing APK files.')
+          hashes = []
+          for apk in files:
+              dest = out / apk.name
+              if dest.exists():
+                  raise SystemExit('Duplicate APK file name: ' + apk.name)
+              shutil.copy2(apk, dest)
+              with dest.open('rb') as f:
+                  hashes.append(hashlib.file_digest(f, 'sha256').hexdigest() + '  ' + dest.name)
+          (out / 'SHA256SUMS.txt').write_text('\n'.join(hashes) + '\n')
+          (out / 'BUILD-INFO.txt').write_text(
+              'Debug build, not a signed production release.\n'
+              + 'Repository commit: ' + os.environ['GITHUB_SHA'] + '\n'
+              + 'Run: ' + os.environ['GITHUB_RUN_ID'] + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write('## APK artifacts\n\n' + '\n'.join('- `' + p.name + '`' for p in files)
+                      + '\n\nFor most modern phones choose arm64-v8a. universal is larger.\n')
+          PY
+
+      - name: Upload installable debug APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cyrus-debug-APK-${{ github.run_number }}
+          path: ${{ runner.temp }}/cyrus-apks/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Optional unit tests and Android lint
+        if: inputs.run_checks == true
+        run: |
+          cd "$PROJECT_DIR"
+          gradle --no-daemon --console=plain --stacktrace --max-workers=2 test :app:lintDebug
+
+      - name: Record check status
+        if: always()
+        env:
+          CHECKS_REQUESTED: ${{ inputs.run_checks }}
+        run: |
+          if [[ "$CHECKS_REQUESTED" != 'true' ]]; then
+            echo 'Unit tests and Android lint were not requested. APK compilation is not a runtime/VPN test.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload diagnostic reports
+        if: always() && steps.source.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cyrus-reports-${{ github.run_number }}
+          path: |
+            ${{ env.PROJECT_DIR }}/**/build/reports/**${{ env.PROJECT_DIR }}/**/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 14
+          
