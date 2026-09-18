@@ -10,15 +10,10 @@ on:
   workflow_dispatch:
     inputs:
       archive:
-        description: 'Exact ZIP path, e.g. Cyrus-0.3.0-full.zip. Empty = newest project ZIP in Git history.'
+        description: 'Exact ZIP path, e.g. Cyrus-0.5.0-dev-source.zip. Empty = newest project ZIP in Git history.'
         required: false
         default: ''
         type: string
-      run_checks:
-        description: 'Also run unit tests and Android lint after building the APK'
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -155,7 +150,7 @@ jobs:
                   if selected:
                       break
               if selected is None:
-                  fail('No source ZIP found. Upload Cyrus-0.3.0-full.zip, not an APK or a ZIP containing only another ZIP.')
+                  fail('No source ZIP found. Upload Cyrus-0.5.0-dev-source.zip, not an APK or a ZIP containing only another ZIP.')
 
           name, prefix = selected
           archive = repo / name
@@ -348,6 +343,16 @@ jobs:
               -keyalg RSA -keysize 2048 -validity 10000
           fi
 
+      - name: Mandatory unit tests and Android lint
+        run: |
+          cd "$PROJECT_DIR"
+          gradle --no-daemon --console=plain --stacktrace --max-workers=2 test :app:lintDebug
+
+      - name: Validate generated configurations against native core
+        run: |
+          cd "$PROJECT_DIR"
+          bash tools/check_generated_configs.sh
+
       - name: Build debug APKs
         run: |
           cd "$PROJECT_DIR"
@@ -391,28 +396,14 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Optional unit tests and Android lint
-        if: inputs.run_checks == true
-        run: |
-          cd "$PROJECT_DIR"
-          gradle --no-daemon --console=plain --stacktrace --max-workers=2 test :app:lintDebug
-
-      - name: Record check status
-        if: always()
-        env:
-          CHECKS_REQUESTED: ${{ inputs.run_checks }}
-        run: |
-          if [[ "$CHECKS_REQUESTED" != 'true' ]]; then
-            echo 'Unit tests and Android lint were not requested. APK compilation is not a runtime/VPN test.' >> "$GITHUB_STEP_SUMMARY"
-          fi
-
       - name: Upload diagnostic reports
         if: always() && steps.source.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: Cyrus-reports-${{ github.run_number }}
           path: |
-            ${{ env.PROJECT_DIR }}/**/build/reports/**${{ env.PROJECT_DIR }}/**/build/test-results/**
+            ${{ env.PROJECT_DIR }}/**/build/reports/**
+            ${{ env.PROJECT_DIR }}/**/build/test-results/**
           if-no-files-found: ignore
           retention-days: 14
           
