@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       archive:
-        description: 'Exact ZIP path, e.g. Cyrus-0.5.0-dev-source.zip. Empty = newest project ZIP in Git history.'
+        description: 'Exact ZIP path, e.g. Cyrus-0.5.0-dev-buildfix1-source.zip. Empty = newest project ZIP in Git history.'
         required: false
         default: ''
         type: string
@@ -150,7 +150,7 @@ jobs:
                   if selected:
                       break
               if selected is None:
-                  fail('No source ZIP found. Upload Cyrus-0.5.0-dev-source.zip, not an APK or a ZIP containing only another ZIP.')
+                  fail('No source ZIP found. Upload Cyrus-0.5.0-dev-buildfix1-source.zip, not an APK or a ZIP containing only another ZIP.')
 
           name, prefix = selected
           archive = repo / name
@@ -259,13 +259,13 @@ jobs:
           path: .ci-native
           persist-credentials: false
 
+      # The later native configuration check also needs this exact Go version,
+      # even when the AAR is cached or supplied inside the ZIP.
       - name: Set up matching Go toolchain
-        if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true'
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: .ci-native/go.sum
+          cache: false
 
       - name: Install NDK for native build
         if: steps.source.outputs.needs_native == 'true' && steps.native_cache.outputs.cache-hit != 'true'
@@ -342,6 +342,11 @@ jobs:
               -dname 'CN=Android Debug,O=Android,C=US' \
               -keyalg RSA -keysize 2048 -validity 10000
           fi
+
+      - name: Compile debug and release sources before tests
+        run: |
+          cd "$PROJECT_DIR"
+          gradle --no-daemon --console=plain --stacktrace --max-workers=2 :app:compileDebugKotlin :app:compileReleaseKotlin
 
       - name: Mandatory unit tests and Android lint
         run: |
